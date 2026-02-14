@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supabase Diagnostics</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test {
+            margin: 20px 0;
+            padding: 15px;
+            border-left: 4px solid #2196F3;
+            background: #f9f9f9;
+        }
+        .test h3 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+        .success {
+            border-left-color: #4CAF50;
+            background: #f1f8f4;
+        }
+        .success h3 { color: #4CAF50; }
+        .error {
+            border-left-color: #f44336;
+            background: #fef1f0;
+        }
+        .error h3 { color: #f44336; }
+        .warning {
+            border-left-color: #ff9800;
+            background: #fff8f0;
+        }
+        .warning h3 { color: #ff9800; }
+        pre {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 13px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Supabase Database Diagnostics</h1>
+        <p>This tool will help diagnose issues with your Supabase database setup.</p>
+        
+        <button onclick="runAllTests()" id="runBtn">Run All Tests</button>
+        <button onclick="fixTables()" id="fixBtn">Fix Tables (Run SQL)</button>
+        
+        <div id="results"></div>
+    </div>
+
+    <script type="module">
+        const SUPABASE_URL = 'https://qzmhkyazrnowicrjkcvc.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF6bWhreWF6cm5vd2ljcmpra3ZjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc4NTc2NTAsImV4cCI6MjA1MzQzMzY1MH0.FhgPQwvEQMJhPcQFkJQCKbXOPRLXxpGTNGHZNjVMhKg';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        window.runAllTests = async function() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="test"><h3>Running tests...</h3><div class="loading"></div></div>';
+            
+            let html = '';
+            
+            // Test 1: Check connection
+            html += await testConnection();
+            
+            // Test 2: Check auth
+            html += await testAuth();
+            
+            // Test 3: Check tables exist
+            html += await testTablesExist();
+            
+            // Test 4: Check RLS policies
+            html += await testRLSPolicies();
+            
+            // Test 5: Try to create a test family
+            html += await testCreateFamily();
+            
+            resultsDiv.innerHTML = html;
+        };
+        
+        async function testConnection() {
+            try {
+                const { data, error } = await supabase.from('profiles').select('count', { count: 'exact', head: true });
+                if (error) throw error;
+                return `<div class="test success">
+                    <h3>✅ Connection Test</h3>
+                    <p>Successfully connected to Supabase</p>
+                </div>`;
+            } catch (e) {
+                return `<div class="test error">
+                    <h3>❌ Connection Test</h3>
+                    <p>Failed to connect: ${e.message}</p>
+                    <pre>${JSON.stringify(e, null, 2)}</pre>
+                </div>`;
+            }
+        }
+        
+        async function testAuth() {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) {
+                    return `<div class="test success">
+                        <h3>✅ Authentication Test</h3>
+                        <p>User is authenticated: ${session.user.email}</p>
+                        <p>User ID: ${session.user.id}</p>
+                    </div>`;
+                } else {
+                    return `<div class="test warning">
+                        <h3>⚠️ Authentication Test</h3>
+                        <p>No active session. Please log in first.</p>
+                    </div>`;
+                }
+            } catch (e) {
+                return `<div class="test error">
+                    <h3>❌ Authentication Test</h3>
+                    <p>Error: ${e.message}</p>
+                </div>`;
+            }
+        }
+        
+        async function testTablesExist() {
+            const tables = ['profiles', 'families', 'children', 'tasks', 'rewards'];
+            let html = '<div class="test"><h3>📊 Tables Check</h3>';
+            
+            for (const table of tables) {
+                try {
+                    const { error } = await supabase.from(table).select('count', { count: 'exact', head: true });
+                    if (error) {
+                        html += `<p>❌ Table '${table}': ${error.message}</p>`;
+                    } else {
+                        html += `<p>✅ Table '${table}' exists</p>`;
+                    }
+                } catch (e) {
+                    html += `<p>❌ Table '${table}': ${e.message}</p>`;
+                }
+            }
+            
+            html += '</div>';
+            return html;
+        }
+        
+        async function testRLSPolicies() {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) {
+                    return `<div class="test warning">
+                        <h3>⚠️ RLS Policies Test</h3>
+                        <p>Cannot test RLS policies without authentication</p>
+                    </div>`;
+                }
+                
+                let html = '<div class="test"><h3>🔒 RLS Policies Test</h3>';
+                
+                // Test profile read
+                const { data: profile, error: profileError } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('id', session.user.id)
+                    .single();
+                
+                if (profileError) {
+                    html += `<p>❌ Profile read: ${profileError.message}</p>`;
+                    html += `<pre>${JSON.stringify(profileError, null, 2)}</pre>`;
+                } else {
+                    html += `<p>✅ Profile read successful</p>`;
+                }
+                
+                html += '</div>';
+                return html;
+            } catch (e) {
+                return `<div class="test error">
+                    <h3>❌ RLS Policies Test</h3>
+                    <p>Error: ${e.message}</p>
+                </div>`;
+            }
+        }
+        
+        async function testCreateFamily() {
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (!session) {
+                    return `<div class="test warning">
+                        <h3>⚠️ Create Family Test</h3>
+                        <p>Cannot test family creation without authentication</p>
+                    </div>`;
+                }
+                
+                const testFamilyId = 'TEST' + Math.random().toString(36).substring(2, 6).toUpperCase();
+                
+                // Try to create a test family
+                const { data, error } = await supabase
+                    .from('families')
+                    .insert([{ id: testFamilyId, name: 'Test Family' }])
+                    .select();
+                
+                if (error) {
+                    return `<div class="test error">
+                        <h3>❌ Create Family Test</h3>
+                        <p>Failed to create test family: ${error.message}</p>
+                        <pre>${JSON.stringify(error, null, 2)}</pre>
+                    </div>`;
+                } else {
+                    // Clean up - delete the test family
+                    await supabase.from('families').delete().eq('id', testFamilyId);
+                    
+                    return `<div class="test success">
+                        <h3>✅ Create Family Test</h3>
+                        <p>Successfully created and deleted test family</p>
+                    </div>`;
+                }
+            } catch (e) {
+                return `<div class="test error">
+                    <h3>❌ Create Family Test</h3>
+                    <p>Error: ${e.message}</p>
+                </div>`;
+            }
+        }
+        
+        window.fixTables = function() {
+            alert('Please run the SQL migration script in your Supabase SQL Editor:\n\n' +
+                  '1. Go to your Supabase Dashboard\n' +
+                  '2. Click on "SQL Editor"\n' +
+                  '3. Create a new query\n' +
+                  '4. Copy and paste the SQL from fix-supabase-tables.sql\n' +
+                  '5. Run the query');
+        };
+    </script>
+</body>
+</html>

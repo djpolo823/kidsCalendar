@@ -1,0 +1,7 @@
+{
+  "name": "KidsCalendar AI",
+  "description": "An interactive, gamified calendar and task manager for families, featuring AI-powered text-to-speech for children.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
