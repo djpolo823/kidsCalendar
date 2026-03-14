@@ -233,50 +233,52 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
 
     try {
       if (learningMode) {
-        // Play Target Language first
-        const targetField = getAudioField(task.status, targetLang);
-        const targetAudio = task[targetField] as string;
+        // Prepare translated titles/descriptions if not present
+        const nTitle = (task as any)[`title_${nativeLang}`] || task.title;
+        const tTitle = (task as any)[`title_${targetLang}`] || task.title;
+        const nDesc = (task as any)[`description_${nativeLang}`] || task.description;
+        const tDesc = (task as any)[`description_${targetLang}`] || task.description;
 
-        if (targetAudio) {
-          const targetText = getTaskSpeechText(task, activeChild?.name || 'Amigo', targetLang);
-          setSpokenText(targetText);
-          await playAudioFromBase64(targetAudio);
+        // Show both in bubble: Native / Target
+        setSpokenText(`${nTitle} / ${tTitle}`);
+
+        // 1. Play Native Language
+        const nativeField = getAudioField(task.status, nativeLang);
+        const nativeAudio = task[nativeField] as string;
+
+        if (nativeAudio) {
+          await playAudioFromBase64(nativeAudio);
         } else {
-          const textToSpeak = getTaskSpeechText(task, activeChild?.name || 'Amigo', nativeLang);
-          const cleanText = cleanForSpeech(textToSpeak);
-          const translated = await translateText(cleanText, targetLang);
-          setSpokenText(translated);
-          await generateSpeech(translated, targetLang);
+          const textToSpeak = getTaskSpeechText({ ...task, title: nTitle, description: nDesc }, activeChild?.name || 'Amigo', nativeLang);
+          const consistentText = await translateText(cleanForSpeech(textToSpeak), nativeLang);
+          await generateSpeech(consistentText, nativeLang);
         }
 
         await new Promise(r => setTimeout(r, 500));
 
-        // Play Native Language
-        const nativeField = getAudioField(task.status, nativeLang);
-        const nativeAudio = task[nativeField] as string;
+        // 2. Play Target Language
+        const targetField = getAudioField(task.status, targetLang);
+        const targetAudio = task[targetField] as string;
 
-        if (nativeAudio) {
-          const nativeText = getTaskSpeechText(task, activeChild?.name || 'Amigo', nativeLang);
-          setSpokenText(nativeText);
-          await playAudioFromBase64(nativeAudio);
+        if (targetAudio) {
+          await playAudioFromBase64(targetAudio);
         } else {
-          const textToSpeak = getTaskSpeechText(task, activeChild?.name || 'Amigo', nativeLang);
-          const consistentText = await translateText(cleanForSpeech(textToSpeak), nativeLang);
-          setSpokenText(consistentText);
-          await generateSpeech(consistentText, nativeLang);
+          const textToSpeak = getTaskSpeechText({ ...task, title: tTitle, description: tDesc }, activeChild?.name || 'Amigo', targetLang);
+          const cleanText = cleanForSpeech(textToSpeak);
+          const translated = await translateText(cleanText, targetLang);
+          await generateSpeech(translated, targetLang);
         }
       } else {
+        const nativeText = getTaskSpeechText(task, activeChild?.name || 'Amigo', nativeLang);
+        setSpokenText(nativeText);
+
         const nativeField = getAudioField(task.status, nativeLang);
         const nativeAudio = task[nativeField] as string;
 
         if (nativeAudio) {
-          const nativeText = getTaskSpeechText(task, activeChild?.name || 'Amigo', nativeLang);
-          setSpokenText(nativeText);
           await playAudioFromBase64(nativeAudio);
         } else {
-          const textToSpeak = getTaskSpeechText(task, activeChild?.name || 'Amigo', nativeLang);
-          const consistentText = await translateText(cleanForSpeech(textToSpeak), nativeLang);
-          setSpokenText(consistentText);
+          const consistentText = await translateText(cleanForSpeech(nativeText), nativeLang);
           await generateSpeech(consistentText, nativeLang);
         }
       }
@@ -311,13 +313,16 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
         const textToSpeak = cleanForSpeech(congratsMsg);
         const translated = await translateText(textToSpeak, targetLang);
 
-        setSpokenText(translated);
-        await generateSpeech(translated, targetLang);
+        // Show both
+        setSpokenText(`${congratsMsg} / ${translated}`);
+
+        // 1. Speak Native
+        await generateSpeech(congratsMsg, nativeLang);
 
         await new Promise(r => setTimeout(r, 500));
 
-        setSpokenText(congratsMsg);
-        await generateSpeech(congratsMsg, nativeLang);
+        // 2. Speak Target
+        await generateSpeech(translated, targetLang);
       } else {
         setSpokenText(congratsMsg);
         await generateSpeech(cleanForSpeech(congratsMsg), nativeLang);
@@ -471,6 +476,39 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
           const isDone = task.status === 'done';
           const isPending = task.status === 'pending';
 
+          const nativeLang = language;
+          const targetLang = nativeLang === 'en' ? 'es' : 'en';
+
+          const renderTaskTitle = (task: Task) => {
+            if (learningMode) {
+              const nTitle = (task as any)[`title_${nativeLang}`] || task.title;
+              const tTitle = (task as any)[`title_${targetLang}`] || task.title;
+              const nDesc = (task as any)[`description_${nativeLang}`] || task.description;
+              const tDesc = (task as any)[`description_${targetLang}`] || task.description;
+
+              return (
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex flex-col mb-1">
+                    <span className="dark:text-white leading-tight">{nTitle}</span>
+                    <span className="text-primary-dark/60 text-[13px] font-bold leading-tight">{tTitle}</span>
+                  </div>
+                  {(nDesc || tDesc) && (
+                    <div className="flex flex-col opacity-80">
+                      {nDesc && <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{nDesc}</p>}
+                      {tDesc && <p className="text-[10px] text-primary-dark/50 dark:text-primary/40 line-clamp-1 italic">{tDesc}</p>}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <div className="flex flex-col">
+                <span className="dark:text-white">{task.title}</span>
+                {task.description && <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{task.description}</p>}
+              </div>
+            );
+          };
+
           if (isActive) {
             return (
               <article key={task.id} className="relative w-full transform transition-all animate-fade-in">
@@ -481,7 +519,7 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
                         <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse"></span>
                         <span className="text-primary-dark font-black text-[10px] tracking-widest uppercase">{t('inProgress', language)}</span>
                       </div>
-                      <h2 className="text-xl font-black dark:text-white leading-tight break-words line-clamp-2">{task.title}</h2>
+                      <h2 className="text-xl font-black leading-tight break-words">{renderTaskTitle(task)}</h2>
                     </div>
                     <div className="bg-slate-50 dark:bg-slate-900/50 size-16 flex-shrink-0 rounded-2xl flex items-center justify-center text-4xl shadow-sm border border-slate-100 dark:border-slate-800">{task.emoji}</div>
                   </div>
@@ -509,7 +547,9 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
                       <span className="bg-primary text-text-main-light text-[8px] font-black px-2 py-0.5 rounded-full uppercase animate-pulse">{language === 'es' ? 'AHORA MISMO' : 'RIGHT NOW'}</span>
                     )}
                   </div>
-                  <h3 className={`text-base font-black break-words line-clamp-1 ${isDone ? 'text-text-secondary-light' : 'dark:text-white'}`}>{task.title}</h3>
+                  <div className="text-base font-black break-words">
+                    {renderTaskTitle(task)}
+                  </div>
                   {!isDone && (
                     <p className="text-[10px] font-black text-yellow-600 uppercase flex items-center gap-1 mt-1"><span className="material-symbols-outlined text-xs">star</span> {task.reward}</p>
                   )}

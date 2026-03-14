@@ -291,6 +291,48 @@ const ParentSettings: React.FC<Props> = ({
                 ))}
               </div>
             </div>
+            
+            <div className="bg-white dark:bg-surface-dark rounded-3xl p-6 shadow-sm border border-gray-100 dark:border-gray-800">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="material-symbols-outlined text-primary">calendar_month</span>
+                <h3 className="text-sm font-black dark:text-white uppercase tracking-widest">{language === 'es' ? 'Sincronizar Calendario' : 'Sync Calendar'}</h3>
+              </div>
+              <p className="text-xs text-slate-500 font-medium mb-4">
+                {language === 'es' ? 'Copia el enlace de cada niño y agrégalo a Google Calendar para ver sus tareas en tiempo real.' : 'Copy each child\'s link and add it to Google Calendar to see their tasks in real-time.'}
+              </p>
+              
+              <div className="flex flex-col gap-3">
+                {children.length === 0 && (
+                  <p className="text-[11px] text-slate-400 italic text-center">
+                    {language === 'es' ? 'No hay niños registrados en la familia.' : 'No children registered in the family.'}
+                  </p>
+                )}
+                {children.map(child => (
+                  <button 
+                    key={child.id}
+                    onClick={() => {
+                      const cleanName = child.name.replace(/\s+/g, '_');
+                      const targetUrl = `https://qzmhkyazrnowicrjkcvc.supabase.co/functions/v1/calendar/Calendario_de_${cleanName}.ics?child_id=${child.id}`;
+                      
+                      navigator.clipboard.writeText(targetUrl).then(() => {
+                        sounds.playSuccess();
+                        alert(language === 'es' ? `¡Enlace de ${child.name} copiado! Ahora pégalo en Google Calendar en el apartado "URL del calendario".` : `${child.name}'s link copied! Now paste it in Google Calendar in the "Calendar URL" section.`);
+                        
+                        // Open Google calendar directly to the "Add by URL" page
+                        window.open('https://calendar.google.com/calendar/r/settings/addbyurl', '_blank');
+                      });
+                    }}
+                    className="w-full py-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-bold rounded-2xl flex items-center justify-between px-4 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 text-left">
+                      <img src={child.avatar} alt={child.name} className="size-8 rounded-full border border-blue-200" />
+                      <span className="truncate">{language === 'es' ? `Copiar link de ${child.name}` : `Copy ${child.name}'s link`}</span>
+                    </div>
+                    <span className="material-symbols-outlined text-lg">content_copy</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 

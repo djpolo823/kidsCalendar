@@ -35,6 +35,10 @@ export interface Task {
   audio_active_en?: string;
   audio_done_es?: string;
   audio_done_en?: string;
+  title_es?: string;
+  title_en?: string;
+  description_es?: string;
+  description_en?: string;
 }
 
 export interface Reward {

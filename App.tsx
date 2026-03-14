@@ -11,7 +11,7 @@ import { DatabaseService, UserAccount } from './services/database';
 import { sounds } from './services/soundService';
 import { supabase } from './services/supabase';
 import { migrateLocalStorageToSupabase } from './services/migrationService';
-import { getSpeechBase64 } from './services/geminiService';
+import { getSpeechBase64, translateText } from './services/geminiService';
 import { getTaskSpeechText, cleanForSpeech } from './services/speechUtils';
 
 const App: React.FC = () => {
@@ -30,11 +30,51 @@ const App: React.FC = () => {
     const statuses: Task['status'][] = ['pending', 'active', 'done'];
     const languages: Language[] = ['es', 'en'];
 
-    // Parallelize all 6 combinations
+    // 1. Translate Title & Description first (to both languages for maximum compatibility)
+    const translationPromises = [];
+    for (const lang of languages) {
+      const titleField = `title_${lang}` as keyof Task;
+      const descField = `description_${lang}` as keyof Task;
+
+      // Always translate title to lang
+      translationPromises.push((async () => {
+        try {
+          const translated = await translateText(task.title, lang);
+          (updatedTask as any)[titleField] = translated;
+        } catch (e) {
+          (updatedTask as any)[titleField] = task.title;
+        }
+      })());
+
+      // Always translate description to lang
+      translationPromises.push((async () => {
+        if (!task.description) {
+          (updatedTask as any)[descField] = '';
+        } else {
+          try {
+            const translated = await translateText(task.description, lang);
+            (updatedTask as any)[descField] = translated;
+          } catch (e) {
+            (updatedTask as any)[descField] = task.description;
+          }
+        }
+      })());
+    }
+
+    await Promise.all(translationPromises);
+
+    // 2. Generate Audio with translated content
     const promises = [];
     for (const status of statuses) {
       for (const lang of languages) {
-        const text = getTaskSpeechText({ ...task, status }, childName, lang);
+        // Create a temporary task with translated title/desc for getTaskSpeechText
+        const tempTaskForSpeech = { 
+          ...updatedTask, 
+          status, 
+          title: (updatedTask as any)[`title_${lang}`] || task.title,
+          description: (updatedTask as any)[`description_${lang}`] || task.description
+        };
+        const text = getTaskSpeechText(tempTaskForSpeech, childName, lang);
         const cleanText = cleanForSpeech(text);
 
         promises.push((async () => {
@@ -59,7 +99,6 @@ const App: React.FC = () => {
     }
   }, [currentUser]);
 
-  // Define fetchFamilyData first to avoid hoisting issues
   const fetchFamilyData = async (userId?: string) => {
     const targetUserId = userId || currentUser?.id;
     if (!targetUserId) return;
@@ -80,8 +119,14 @@ const App: React.FC = () => {
 
         // 2. If family exists, fetch children/tasks/rewards
         if (profile.family_id) {
-          const { children: dbChildren } = await DatabaseService.fetchFamilyData(profile.family_id);
+          const { children: dbChildren, guardians: dbGuardians } = await DatabaseService.fetchFamilyData(profile.family_id);
           setChildren(dbChildren);
+          // Flag current user among guardians
+          const mappedGuardians = dbGuardians.map(g => ({
+            ...g,
+            isYou: g.id === targetUserId
+          }));
+          setGuardians(mappedGuardians);
         }
       }
     } catch (err) {
@@ -123,12 +168,6 @@ const App: React.FC = () => {
   const uploadFamilyData = async (localChildren: Child[]) => {
     if (!currentUser?.familyId || localChildren.length === 0) return;
 
-    // Check if these are default children we shouldn't sync
-    if (localChildren.every(c => c.id.startsWith('c_') && Date.now() - parseInt(c.id.split('_')[1] || '0') < 5000)) {
-      console.log("Sync: Skipping sync of brand new children");
-      return;
-    }
-
     setSyncStatus({ type: 'loading', message: language === 'es' ? 'Subiendo datos a la nube...' : 'Uploading data to cloud...' });
     setIsSyncing(true);
     console.log("Sync: Starting upload for family:", currentUser.familyId);
@@ -136,11 +175,16 @@ const App: React.FC = () => {
     try {
       for (const child of localChildren) {
         // Check if child already exists in Supabase to avoid duplicates
-        const { data: existingChild } = await supabase
+        const { data: existingChild, error: checkError } = await supabase
           .from('children')
           .select('id')
           .eq('id', child.id)
           .single();
+
+        if (checkError && checkError.code !== 'PGRST116') {
+           console.error("Sync Error: Failed to check child existence:", checkError);
+           continue;
+        }
 
         if (!existingChild) {
           console.log(`Sync: Uploading child ${child.name}...`);
@@ -171,6 +215,10 @@ const App: React.FC = () => {
               child_id: child.id,
               title: task.title,
               description: task.description,
+              title_es: task.title_es,
+              title_en: task.title_en,
+              description_es: task.description_es,
+              description_en: task.description_en,
               reward: task.reward,
               time: task.time,
               duration: task.duration,
@@ -187,7 +235,7 @@ const App: React.FC = () => {
               audio_done_en: task.audio_done_en
             }));
 
-            const { error: taskError } = await supabase.from('tasks').insert(tasksToInsert);
+            const { error: taskError } = await supabase.from('tasks').upsert(tasksToInsert);
             if (taskError) console.error("Sync Error: Failed to insert tasks for:", child.name, taskError);
           }
 
@@ -203,7 +251,7 @@ const App: React.FC = () => {
               type: reward.type
             }));
 
-            const { error: rewardError } = await supabase.from('rewards').insert(rewardsToInsert);
+            const { error: rewardError } = await supabase.from('rewards').upsert(rewardsToInsert);
             if (rewardError) console.error("Sync Error: Failed to insert rewards for:", child.name, rewardError);
           }
         } else {
@@ -541,30 +589,28 @@ const App: React.FC = () => {
     }
   };
 
-  const addChild = (child: Child) => {
+  const addChild = async (child: Child) => {
     const newChildren = [...children, child];
     setChildren(newChildren);
     // If user is logged in, sync this new child
     if (currentUser?.familyId) {
-      uploadFamilyData([child]);
+      console.log("App: Adding new child, trigger cloud sync...");
+      await uploadFamilyData([child]);
     }
   };
 
-  const updateChild = (updatedChild: Child) => {
+  const updateChild = async (updatedChild: Child) => {
     setChildren(children.map(c => c.id === updatedChild.id ? updatedChild : c));
     if (currentUser?.familyId) {
-      // For performance, we could just update Supabase child entry here
-      // But uploadFamilyData is robust as it checks for existence
-      uploadFamilyData([updatedChild]);
+      await uploadFamilyData([updatedChild]);
     }
   };
 
-  const deleteChild = (id: string) => {
+  const deleteChild = async (id: string) => {
     setChildren(children.filter(c => c.id !== id));
     if (currentUser?.familyId) {
-      supabase.from('children').delete().eq('id', id).then(res => {
-        if (res.error) console.error("Error deleting child from DB:", res.error);
-      });
+      const { error } = await supabase.from('children').delete().eq('id', id);
+      if (error) console.error("Error deleting child from DB:", error);
     }
   };
 
@@ -605,9 +651,30 @@ const App: React.FC = () => {
 
   const addGuardian = (guardian: Guardian) => setGuardians([...guardians, guardian]);
   const updateGuardian = (updatedGuardian: Guardian) => setGuardians(guardians.map(g => g.id === updatedGuardian.id ? updatedGuardian : g));
-  const deleteGuardian = (id: string) => setGuardians(guardians.filter(g => g.id !== id));
+  const deleteGuardian = async (id: string) => {
+    // Optimistic UI update
+    setGuardians(guardians.filter(g => g.id !== id));
+    
+    // Sync with Supabase (remove user from family)
+    if (currentUser?.familyId) {
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ family_id: null })
+          .eq('id', id);
+          
+        if (error) {
+          console.error("Error deleting guardian from DB:", error);
+          // Only refetch if there was an error to revert UI
+          fetchFamilyData(); 
+        }
+      } catch (err) {
+        console.error("Unexpected error deleting guardian:", err);
+      }
+    }
+  };
 
-  const updateTaskStatus = (childId: string, taskId: string, status: Task['status']) => {
+  const updateTaskStatus = async (childId: string, taskId: string, status: Task['status']) => {
     const updatedChildren = children.map(child => {
       if (child.id === childId) {
         const updatedTasks = child.tasks.map(task => {
@@ -666,10 +733,25 @@ const App: React.FC = () => {
 
         // Sync reward redemption
         if (currentUser?.familyId) {
+          const redemptionData = newHistory[0];
+          
+          // 1. Update stars
           supabase.from('children').update({ stars: updatedChild.stars }).eq('id', childId).then(res => {
             if (res.error) console.error("Error updating child stars in DB:", res.error);
           });
-          // We'd also sync the redemption record if we had a table for it, but for now stars are enough
+          
+          // 2. Insert redemption record
+          supabase.from('redemption_history').insert([{
+            id: redemptionData.id,
+            child_id: childId,
+            reward_id: redemptionData.rewardId,
+            reward_title: redemptionData.rewardTitle,
+            cost: redemptionData.cost,
+            timestamp: redemptionData.timestamp,
+            note: redemptionData.note
+          }]).then(res => {
+            if (res.error) console.error("Error inserting redemption record in DB:", res.error);
+          });
         }
 
         return updatedChild;
@@ -743,11 +825,15 @@ const App: React.FC = () => {
 
                   setChildren(prev => prev.map(c => c.id === childId ? { ...c, tasks: [...c.tasks, taskWithAudio] } : c));
                   if (currentUser?.familyId) {
-                    supabase.from('tasks').insert([{
+                    const { error } = await supabase.from('tasks').insert([{
                       id: taskWithAudio.id,
                       child_id: childId,
                       title: taskWithAudio.title,
                       description: taskWithAudio.description,
+                      title_es: taskWithAudio.title_es,
+                      title_en: taskWithAudio.title_en,
+                      description_es: taskWithAudio.description_es,
+                      description_en: taskWithAudio.description_en,
                       reward: taskWithAudio.reward,
                       time: taskWithAudio.time,
                       duration: taskWithAudio.duration,
@@ -762,9 +848,8 @@ const App: React.FC = () => {
                       audio_done_es: taskWithAudio.audio_done_es,
                       audio_done_en: taskWithAudio.audio_done_en,
                       start_time: taskWithAudio.startTime
-                    }]).then(res => {
-                      if (res.error) console.error("Error syncing new task:", res.error);
-                    });
+                    }]);
+                    if (error) console.error("Error syncing new task:", error);
                   }
                 }}
                 onAddTasks={async (childId, tasks) => {
@@ -780,6 +865,10 @@ const App: React.FC = () => {
                       child_id: childId,
                       title: task.title,
                       description: task.description,
+                      title_es: task.title_es,
+                      title_en: task.title_en,
+                      description_es: task.description_es,
+                      description_en: task.description_en,
                       reward: task.reward,
                       time: task.time,
                       duration: task.duration,
@@ -795,9 +884,8 @@ const App: React.FC = () => {
                       audio_done_en: task.audio_done_en,
                       start_time: task.startTime
                     }));
-                    supabase.from('tasks').insert(tasksToInsert).then(res => {
-                      if (res.error) console.error("Error syncing batch tasks:", res.error);
-                    });
+                    const { error } = await supabase.from('tasks').insert(tasksToInsert);
+                    if (error) console.error("Error syncing batch tasks:", error);
                   }
                 }}
                 onUpdateTask={async (childId, task) => {
@@ -811,9 +899,13 @@ const App: React.FC = () => {
 
                   setChildren(prev => prev.map(c => c.id === childId ? { ...c, tasks: c.tasks.map(t => t.id === task.id ? taskToSave : t) } : c));
                   if (currentUser?.familyId) {
-                    supabase.from('tasks').update({
+                    const { error } = await supabase.from('tasks').update({
                       title: taskToSave.title,
                       description: taskToSave.description,
+                      title_es: taskToSave.title_es,
+                      title_en: taskToSave.title_en,
+                      description_es: taskToSave.description_es,
+                      description_en: taskToSave.description_en,
                       reward: taskToSave.reward,
                       time: taskToSave.time,
                       duration: taskToSave.duration,
@@ -828,23 +920,21 @@ const App: React.FC = () => {
                       audio_done_es: taskToSave.audio_done_es,
                       audio_done_en: taskToSave.audio_done_en,
                       start_time: taskToSave.startTime
-                    }).eq('id', task.id).then(res => {
-                      if (res.error) console.error("Error updating task in DB:", res.error);
-                    });
+                    }).eq('id', task.id);
+                    if (error) console.error("Error updating task in DB:", error);
                   }
                 }}
-                onDeleteTask={(childId, taskId) => {
+                onDeleteTask={async (childId, taskId) => {
                   setChildren(children.map(c => c.id === childId ? { ...c, tasks: c.tasks.filter(t => t.id !== taskId) } : c));
                   if (currentUser?.familyId) {
-                    supabase.from('tasks').delete().eq('id', taskId).then(res => {
-                      if (res.error) console.error("Error deleting task from DB:", res.error);
-                    });
+                    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+                    if (error) console.error("Error deleting task from DB:", error);
                   }
                 }}
-                onAddReward={(childId, reward) => {
+                onAddReward={async (childId, reward) => {
                   setChildren(prev => prev.map(c => c.id === childId ? { ...c, rewards: [...(c.rewards || []), reward] } : c));
                   if (currentUser?.familyId) {
-                    supabase.from('rewards').insert([{
+                    const { error } = await supabase.from('rewards').insert([{
                       id: reward.id,
                       child_id: childId,
                       title: reward.title,
@@ -852,25 +942,22 @@ const App: React.FC = () => {
                       cost: reward.cost,
                       image: reward.image,
                       type: reward.type
-                    }]).then(res => {
-                      if (res.error) console.error("Error syncing new reward:", res.error);
-                    });
+                    }]);
+                    if (error) console.error("Error syncing new reward:", error);
                   }
                 }}
-                onUpdateReward={(childId, reward) => {
+                onUpdateReward={async (childId, reward) => {
                   setChildren(children.map(c => c.id === childId ? { ...c, rewards: (c.rewards || []).map(r => r.id === reward.id ? reward : r) } : c));
                   if (currentUser?.familyId) {
-                    supabase.from('rewards').update(reward).eq('id', reward.id).then(res => {
-                      if (res.error) console.error("Error updating reward in DB:", res.error);
-                    });
+                    const { error } = await supabase.from('rewards').update(reward).eq('id', reward.id);
+                    if (error) console.error("Error updating reward in DB:", error);
                   }
                 }}
-                onDeleteReward={(childId, rewardId) => {
+                onDeleteReward={async (childId, rewardId) => {
                   setChildren(children.map(c => c.id === childId ? { ...c, rewards: (c.rewards || []).filter(r => r.id !== rewardId) } : c));
                   if (currentUser?.familyId) {
-                    supabase.from('rewards').delete().eq('id', rewardId).then(res => {
-                      if (res.error) console.error("Error deleting reward from DB:", res.error);
-                    });
+                    const { error } = await supabase.from('rewards').delete().eq('id', rewardId);
+                    if (error) console.error("Error deleting reward from DB:", error);
                   }
                 }}
               />

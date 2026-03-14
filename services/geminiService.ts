@@ -78,23 +78,45 @@ const speakWithBrowserFallback = (text: string, lang: Language) => {
 };
 
 export const translateText = async (text: string, targetLang: Language): Promise<string> => {
+  if (!text || !text.trim()) return text;
+  const tLang = targetLang === 'es' ? 'Spanish' : 'English';
+  console.log(`[Gemini] Translating: "${text}" to ${tLang}`);
+  
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-    // Fix: Explicitly type response as GenerateContentResponse to avoid 'unknown' errors when using withRetry wrapper
-    const response: GenerateContentResponse = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Translate the following text to ${targetLang === 'es' ? 'Spanish' : 'English'}: "${text}". Respond only with the translated text.`,
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn("[Gemini] No API Key found for translation");
+      return text;
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response: any = await withRetry<any>(() => ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: [{ role: 'user', parts: [{ text: `Translate this text to ${tLang}. Respond ONLY with the translated text, no quotes or explanations.\n\nText: ${text}` }] }],
     }));
-    return response.text?.trim() || text;
+    
+    // Log the whole response for debugging if needed (redacted key info)
+    console.log("[Gemini] Response structure:", JSON.stringify(response).substring(0, 500));
+
+    let translated = '';
+    if (response.text) {
+      translated = response.text;
+    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+      translated = response.candidates[0].content.parts[0].text;
+    }
+
+    translated = translated.trim();
+    console.log(`[Gemini] Translation result: "${translated}"`);
+    return translated || text;
   } catch (error) {
-    console.error("Error translating text:", error);
+    console.error("[Gemini] Error translating text:", error);
     return text;
   }
 };
 
 export const getSpeechBase64 = async (text: string, lang: Language = 'en', voice: string = 'Kore'): Promise<string | null> => {
   try {
-    const apiKey = process.env.API_KEY as string;
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey.includes('PLACEHOLDER')) return null;
 
     const ai = new GoogleGenAI({ apiKey });
@@ -102,11 +124,11 @@ export const getSpeechBase64 = async (text: string, lang: Language = 'en', voice
       ? `Dilo con tono alegre en ESPAÑOL: ${text}`
       : `Say with a friendly tone in ENGLISH: ${text}`;
 
-    const response: GenerateContentResponse = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: instruction }] }],
+    const response: any = await withRetry<any>(() => ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: [{ role: 'user', parts: [{ text: instruction }] }],
       config: {
-        responseModalities: [Modality.AUDIO],
+        responseModalities: ["AUDIO" as any], // Use string instead of enum to be safe with auto-gen SDK
         speechConfig: {
           voiceConfig: {
             prebuiltVoiceConfig: { voiceName: voice },
@@ -115,7 +137,12 @@ export const getSpeechBase64 = async (text: string, lang: Language = 'en', voice
       },
     }));
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    // Safer extraction for different SDK versions
+    let base64Audio = response.data; // Using the getter from Stainless SDK
+    if (!base64Audio) {
+      base64Audio = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData?.data;
+    }
+    
     return typeof base64Audio === 'string' ? base64Audio : null;
   } catch (error) {
     console.error("Error getting speech base64:", error);
@@ -164,38 +191,66 @@ export const generateSpeech = async (text: string, lang: Language = 'en', voice:
 };
 
 export const generateBulkTasks = async (prompt: string, lang: Language): Promise<Partial<Task>[]> => {
+  console.log(`[Gemini] Generating bulk tasks for: "${prompt}" in ${lang}`);
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-    // Fix: Explicitly type response as GenerateContentResponse and provide generic to withRetry to ensure .text property access is valid
-    const response: GenerateContentResponse = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Generate a list of 4-6 child tasks based on this description: "${prompt}". 
-      Language: ${lang === 'es' ? 'Spanish' : 'English'}.
-      Return a JSON array of objects with properties: title, description, reward (a number between 5 and 50 representing stars to earn), time (HH:MM AM/PM format), duration (minutes as string), emoji, type (routine, school, activity, or hygiene).`,
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) return [];
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response: any = await withRetry<any>(() => ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: [{ role: 'user', parts: [{ text: `Generate a list of 4-6 child tasks based on this description: "${prompt}". 
+      IMPORTANT: You MUST provide titles and descriptions in BOTH Spanish and English.
+      
+      Return a JSON array of objects with properties: 
+      - title (original)
+      - description (original)
+      - title_es (Spanish translation)
+      - title_en (English translation)
+      - description_es (Spanish translation)
+      - description_en (English translation)
+      - reward (number 5-50)
+      - time (HH:MM AM/PM)
+      - duration (minutes as number)
+      - emoji
+      - type (routine, school, activity, or hygiene).` }] }],
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.ARRAY,
+          type: "ARRAY" as any,
           items: {
-            type: Type.OBJECT,
+            type: "OBJECT" as any,
             properties: {
-              title: { type: Type.STRING },
-              description: { type: Type.STRING },
-              reward: { type: Type.NUMBER },
-              time: { type: Type.STRING },
-              duration: { type: Type.STRING },
-              emoji: { type: Type.STRING },
-              type: { type: Type.STRING }
+              title: { type: "STRING" as any },
+              description: { type: "STRING" as any },
+              title_es: { type: "STRING" as any },
+              title_en: { type: "STRING" as any },
+              description_es: { type: "STRING" as any },
+              description_en: { type: "STRING" as any },
+              reward: { type: "NUMBER" as any },
+              time: { type: "STRING" as any },
+              duration: { type: "NUMBER" as any },
+              emoji: { type: "STRING" as any },
+              type: { type: "STRING" as any }
             },
-            required: ["title", "time", "emoji", "reward", "type"]
+            required: ["title", "title_es", "title_en", "time", "emoji", "reward", "type"]
           }
         }
       }
     }));
 
-    return JSON.parse(response.text || "[]");
+    let jsonStr = '';
+    if (response.text) {
+      jsonStr = response.text;
+    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+      jsonStr = response.candidates[0].content.parts[0].text;
+    }
+
+    const result = JSON.parse(jsonStr || "[]");
+    console.log(`[Gemini] Generated ${result.length} tasks with translations`);
+    return result;
   } catch (error) {
-    console.error("Error generating bulk tasks:", error);
+    console.error("[Gemini] Error generating bulk tasks:", error);
     return [];
   }
 };
@@ -208,7 +263,7 @@ export const generateAvatars = async (userPrompt: string): Promise<string[]> => 
     // Fix: Explicitly type withRetry generic to GenerateContentResponse
     const requests = Array.from({ length: 4 }).map(() =>
       withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
+        model: 'gemini-1.5-flash',
         contents: { parts: [{ text: fullPrompt }] },
         config: { imageConfig: { aspectRatio: "1:1" } }
       }))
@@ -239,7 +294,7 @@ export const suggestEmoji = async (title: string, description: string): Promise<
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
     // Fix: Explicitly type response and withRetry generic as GenerateContentResponse to fix 'unknown' type error
     const response: GenerateContentResponse = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-1.5-flash',
       contents: `Suggest a single emoji that best represents this task for a kid's calendar.
       Title: "${title}"
       Description: "${description}"
