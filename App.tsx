@@ -215,10 +215,6 @@ const App: React.FC = () => {
               child_id: child.id,
               title: task.title,
               description: task.description,
-              title_es: task.title_es,
-              title_en: task.title_en,
-              description_es: task.description_es,
-              description_en: task.description_en,
               reward: task.reward,
               time: task.time,
               duration: task.duration,
@@ -677,8 +673,15 @@ const App: React.FC = () => {
   const updateTaskStatus = async (childId: string, taskId: string, status: Task['status']) => {
     const updatedChildren = children.map(child => {
       if (child.id === childId) {
+        let starsEarned = 0;
         const updatedTasks = child.tasks.map(task => {
           if (task.id === taskId) {
+            if (status === 'done' && task.status !== 'done') {
+              starsEarned = task.reward || 0;
+            } else if (status !== 'done' && task.status === 'done') {
+              starsEarned = -(task.reward || 0);
+            }
+
             const updatedTask = {
               ...task,
               status,
@@ -697,7 +700,18 @@ const App: React.FC = () => {
           }
           return task;
         });
-        return { ...child, tasks: updatedTasks };
+
+        const newStarsTotal = Math.max(0, child.stars + starsEarned);
+
+        if (starsEarned !== 0 && currentUser?.familyId) {
+          supabase.from('children').update({
+            stars: newStarsTotal
+          }).eq('id', child.id).then(res => {
+            if (res.error) console.error("Error updating child stars in DB:", res.error);
+          });
+        }
+
+        return { ...child, stars: newStarsTotal, tasks: updatedTasks };
       }
       return child;
     });

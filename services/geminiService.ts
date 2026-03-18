@@ -114,6 +114,34 @@ export const translateText = async (text: string, targetLang: Language): Promise
   }
 };
 
+export const translateToBaseLanguage = async (text: string, baseLang: Language): Promise<string> => {
+  if (!text || !text.trim()) return text;
+  const tLang = baseLang === 'es' ? 'Spanish' : 'English';
+  
+  try {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) return text;
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response: any = await withRetry<any>(() => ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: [{ role: 'user', parts: [{ text: `Translate the following text to ${tLang}. Give ONLY the direct translation, nothing else. If the text is already in ${tLang}, simply return it exactly as it is. Do not wrap in quotes or add notes.\n\nText: ${text}` }] }],
+    }));
+    
+    let translated = '';
+    if (response.text) {
+      translated = response.text;
+    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+      translated = response.candidates[0].content.parts[0].text;
+    }
+
+    return translated.trim() || text;
+  } catch (error) {
+    console.error("[Gemini] Error translating to base language:", error);
+    return text;
+  }
+};
+
 export const getSpeechBase64 = async (text: string, lang: Language = 'en', voice: string = 'Kore'): Promise<string | null> => {
   try {
     const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
@@ -200,15 +228,11 @@ export const generateBulkTasks = async (prompt: string, lang: Language): Promise
     const response: any = await withRetry<any>(() => ai.models.generateContent({
       model: "gemini-1.5-flash",
       contents: [{ role: 'user', parts: [{ text: `Generate a list of 4-6 child tasks based on this description: "${prompt}". 
-      IMPORTANT: You MUST provide titles and descriptions in BOTH Spanish and English.
+      IMPORTANT: You MUST provide titles and descriptions in ${lang === 'es' ? 'Spanish' : 'English'}.
       
       Return a JSON array of objects with properties: 
-      - title (original)
-      - description (original)
-      - title_es (Spanish translation)
-      - title_en (English translation)
-      - description_es (Spanish translation)
-      - description_en (English translation)
+      - title
+      - description
       - reward (number 5-50)
       - time (HH:MM AM/PM)
       - duration (minutes as number)
@@ -223,17 +247,13 @@ export const generateBulkTasks = async (prompt: string, lang: Language): Promise
             properties: {
               title: { type: "STRING" as any },
               description: { type: "STRING" as any },
-              title_es: { type: "STRING" as any },
-              title_en: { type: "STRING" as any },
-              description_es: { type: "STRING" as any },
-              description_en: { type: "STRING" as any },
               reward: { type: "NUMBER" as any },
               time: { type: "STRING" as any },
               duration: { type: "NUMBER" as any },
               emoji: { type: "STRING" as any },
               type: { type: "STRING" as any }
             },
-            required: ["title", "title_es", "title_en", "time", "emoji", "reward", "type"]
+            required: ["title", "time", "emoji", "reward", "type"]
           }
         }
       }

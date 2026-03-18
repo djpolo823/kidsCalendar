@@ -5,7 +5,7 @@ import { Child, Task, Guardian, Reward, TimeFormat, Language, TaskRecurrence, Re
 import SideMenu from '../components/SideMenu';
 import { sounds } from '../services/soundService';
 import { t } from '../services/i18n';
-import { generateBulkTasks, generateRewardSuggestions, RewardSuggestion } from '../services/geminiService';
+import { generateBulkTasks, generateRewardSuggestions, RewardSuggestion, translateToBaseLanguage } from '../services/geminiService';
 
 interface Props {
   children: Child[];
@@ -196,12 +196,18 @@ const ParentDashboard: React.FC<Props> = ({
     );
   };
 
-  const handleSaveTask = () => {
+  const handleSaveTask = async () => {
     if (!selectedChild) return;
     setTriedToSave(true);
     if (!newTask.title.trim()) return;
     if (!isValidTime(newTask.time)) return;
     if (!isValidDuration(newTask.duration || '0')) return;
+
+    setIsAddingTask(true);
+    setIsGenerating(true);
+
+    const translatedTitle = await translateToBaseLanguage(newTask.title, language);
+    const translatedDesc = newTask.description ? await translateToBaseLanguage(newTask.description, language) : '';
 
     const recurrence: TaskRecurrence | undefined = recurrenceFreq !== 'none' ? {
       frequency: recurrenceFreq,
@@ -210,7 +216,7 @@ const ParentDashboard: React.FC<Props> = ({
       endDate: recurrenceEndDate || undefined
     } : undefined;
 
-    const taskData: Task = { ...newTask, recurrence };
+    const taskData: Task = { ...newTask, title: translatedTitle, description: translatedDesc, recurrence };
 
     if (editingTaskId) {
       onUpdateTask(selectedChild.id, { ...taskData, id: editingTaskId });
@@ -218,6 +224,7 @@ const ParentDashboard: React.FC<Props> = ({
       onAddTask(selectedChild.id, { ...taskData, id: `task_${Date.now()}` });
     }
 
+    setIsGenerating(false);
     setIsAddingTask(false);
     setEditingTaskId(null);
     resetTaskState();
@@ -259,7 +266,7 @@ const ParentDashboard: React.FC<Props> = ({
     }
   };
 
-  const handleSaveTableImport = () => {
+  const handleSaveTableImport = async () => {
     if (!selectedChild) return;
     const validRows = tableRows.filter(r => r.title.trim() || r.time.trim());
     if (validRows.length === 0) return;
@@ -277,9 +284,13 @@ const ParentDashboard: React.FC<Props> = ({
       return;
     }
 
+    setIsGenerating(true);
     sounds.playClick();
-    const tasksToAdd = validRows.map((row, index) => {
-      const { displayTitle, displayDescription } = formatTitleAndDescription(row.title, row.description);
+    
+    const tasksToAdd = await Promise.all(validRows.map(async (row, index) => {
+      const translatedTitle = await translateToBaseLanguage(row.title, language);
+      const translatedDesc = row.description ? await translateToBaseLanguage(row.description, language) : '';
+      const { displayTitle, displayDescription } = formatTitleAndDescription(translatedTitle, translatedDesc);
       return {
         id: `table_${Date.now()}_${index}_${Math.random()}`,
         time: row.time,
@@ -288,10 +299,11 @@ const ParentDashboard: React.FC<Props> = ({
         duration: row.duration || '30',
         reward: 5, emoji: '📅', type: 'routine', status: 'pending'
       } as Task;
-    });
+    }));
 
     onAddTasks(selectedChild.id, tasksToAdd);
 
+    setIsGenerating(false);
     setIsTableImporting(false);
     setTableRows([
       { time: '08:00 AM', title: '', description: '', duration: '30' },

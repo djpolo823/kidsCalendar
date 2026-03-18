@@ -183,6 +183,45 @@ const TaskTimer: React.FC<{ task: Task, language: Language }> = ({ task, languag
   );
 };
 
+const BilingualTaskTitle: React.FC<{ task: Task, language: Language, learningMode: boolean }> = ({ task, language, learningMode }) => {
+  const [tTitle, setTTitle] = useState<string>('');
+  const [tDesc, setTDesc] = useState<string>('');
+
+  useEffect(() => {
+    if (learningMode) {
+      const targetLang = language === 'en' ? 'es' : 'en';
+      translateText(task.title, targetLang).then(res => setTTitle(res));
+      if (task.description) {
+        translateText(task.description, targetLang).then(res => setTDesc(res));
+      }
+    }
+  }, [task.title, task.description, language, learningMode]);
+
+  if (learningMode) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col mb-1">
+          <span className="dark:text-white leading-tight">{task.title}</span>
+          <span className="text-primary-dark/60 text-[13px] font-bold leading-tight min-h-[1em]">{tTitle}</span>
+        </div>
+        {(task.description || tDesc) && (
+          <div className="flex flex-col opacity-80">
+            {task.description && <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{task.description}</p>}
+            {tDesc && tDesc !== "..." && <p className="text-[10px] text-primary-dark/50 dark:text-primary/40 line-clamp-1 italic">{tDesc}</p>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col">
+      <span className="dark:text-white">{task.title}</span>
+      {task.description && <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{task.description}</p>}
+    </div>
+  );
+};
+
 const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, learningMode, onUpdateTask, onSwitchChild }) => {
   const navigate = useNavigate();
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -233,11 +272,10 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
 
     try {
       if (learningMode) {
-        // Prepare translated titles/descriptions if not present
-        const nTitle = (task as any)[`title_${nativeLang}`] || task.title;
-        const tTitle = (task as any)[`title_${targetLang}`] || task.title;
-        const nDesc = (task as any)[`description_${nativeLang}`] || task.description;
-        const tDesc = (task as any)[`description_${targetLang}`] || task.description;
+        const nTitle = task.title;
+        const nDesc = task.description || '';
+        const tTitle = await translateText(task.title, targetLang);
+        const tDesc = nDesc ? await translateText(nDesc, targetLang) : '';
 
         // Show both in bubble: Native / Target
         setSpokenText(`${nTitle} / ${tTitle}`);
@@ -479,36 +517,6 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
           const nativeLang = language;
           const targetLang = nativeLang === 'en' ? 'es' : 'en';
 
-          const renderTaskTitle = (task: Task) => {
-            if (learningMode) {
-              const nTitle = (task as any)[`title_${nativeLang}`] || task.title;
-              const tTitle = (task as any)[`title_${targetLang}`] || task.title;
-              const nDesc = (task as any)[`description_${nativeLang}`] || task.description;
-              const tDesc = (task as any)[`description_${targetLang}`] || task.description;
-
-              return (
-                <div className="flex flex-col gap-0.5">
-                  <div className="flex flex-col mb-1">
-                    <span className="dark:text-white leading-tight">{nTitle}</span>
-                    <span className="text-primary-dark/60 text-[13px] font-bold leading-tight">{tTitle}</span>
-                  </div>
-                  {(nDesc || tDesc) && (
-                    <div className="flex flex-col opacity-80">
-                      {nDesc && <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{nDesc}</p>}
-                      {tDesc && <p className="text-[10px] text-primary-dark/50 dark:text-primary/40 line-clamp-1 italic">{tDesc}</p>}
-                    </div>
-                  )}
-                </div>
-              );
-            }
-            return (
-              <div className="flex flex-col">
-                <span className="dark:text-white">{task.title}</span>
-                {task.description && <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{task.description}</p>}
-              </div>
-            );
-          };
-
           if (isActive) {
             return (
               <article key={task.id} className="relative w-full transform transition-all animate-fade-in">
@@ -519,7 +527,7 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
                         <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse"></span>
                         <span className="text-primary-dark font-black text-[10px] tracking-widest uppercase">{t('inProgress', language)}</span>
                       </div>
-                      <h2 className="text-xl font-black leading-tight break-words">{renderTaskTitle(task)}</h2>
+                      <h2 className="text-xl font-black leading-tight break-words"><BilingualTaskTitle task={task} language={language} learningMode={learningMode} /></h2>
                     </div>
                     <div className="bg-slate-50 dark:bg-slate-900/50 size-16 flex-shrink-0 rounded-2xl flex items-center justify-center text-4xl shadow-sm border border-slate-100 dark:border-slate-800">{task.emoji}</div>
                   </div>
@@ -548,7 +556,7 @@ const ChildPortal: React.FC<Props> = ({ tasks, children, timeFormat, language, l
                     )}
                   </div>
                   <div className="text-base font-black break-words">
-                    {renderTaskTitle(task)}
+                    <BilingualTaskTitle task={task} language={language} learningMode={learningMode} />
                   </div>
                   {!isDone && (
                     <p className="text-[10px] font-black text-yellow-600 uppercase flex items-center gap-1 mt-1"><span className="material-symbols-outlined text-xs">star</span> {task.reward}</p>
