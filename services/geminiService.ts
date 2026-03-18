@@ -83,10 +83,13 @@ export const translateText = async (text: string, targetLang: Language): Promise
   if (!text || !text.trim()) return text;
   
   // 1. Check local cache to avoid redundant API hits across reloads
-  const cacheKey = `trans_${targetLang}_${text}`;
+  const cacheKey = `trans_v2_${targetLang}_${text}`;
   try {
     const cached = localStorage.getItem(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      console.log(`[Gemini] Cache hit for: "${text}" -> "${cached}"`);
+      return cached;
+    }
   } catch (e) {
     // Ignore localStorage errors
   }
@@ -121,7 +124,11 @@ export const translateText = async (text: string, targetLang: Language): Promise
         console.log(`[Gemini] Translation result: "${translated}"`);
         
         const finalResult = translated || text;
-        try { localStorage.setItem(cacheKey, finalResult); } catch (e) {}
+        
+        // Only cache if we actually got a translation, preventing caching of invisible failures
+        if (finalResult && finalResult !== text) {
+          try { localStorage.setItem(cacheKey, finalResult); } catch (e) {}
+        }
         
         // Wait briefly before next request to space them out
         await sleep(400); 
