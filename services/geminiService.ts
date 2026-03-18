@@ -229,6 +229,17 @@ export const generateBulkTasks = async (prompt: string, lang: Language): Promise
       model: "gemini-1.5-flash",
       contents: [{ role: 'user', parts: [{ text: `Generate a list of 4-6 child tasks based on this description: "${prompt}". 
       IMPORTANT: You MUST provide titles and descriptions in ${lang === 'es' ? 'Spanish' : 'English'}.
+
+      RULES FOR DESCRIPTIONS:
+      1. MUST be SHORT and easy to understand for children (max 1 sentence, 10 to 15 words).
+      2. DO NOT add greetings (e.g. "Hola", "Hello").
+      3. DO NOT repeat the task title inside the description.
+      4. DO NOT include duration, stars, rewards, or instructions to start.
+      5. The description MUST be exclusively a brief motivational sentence validating why the task is good.
+         Examples: 
+         - "¡Buen comienzo! Empezar el día temprano te ayudará a tener un gran día."
+         - "¡Excelente! Cuidar tus dientes los mantiene fuertes y saludables."
+         - "¡Muy bien! Aprender cosas nuevas hace tu mente más fuerte."
       
       Return a JSON array of objects with properties: 
       - title
