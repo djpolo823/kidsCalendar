@@ -109,7 +109,7 @@ export const translateText = async (text: string, targetLang: Language): Promise
 
         const ai = new GoogleGenAI({ apiKey });
         const response: any = await withRetry<any>(() => ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3-flash-preview",
           contents: [{ role: 'user', parts: [{ text: `Translate this text to ${tLang}. Respond ONLY with the direct translated text, without quotes, notes, or explanations. If it is already ${tLang}, return it exactly as is.\n\nText: ${text}` }] }],
         }));
 
@@ -153,7 +153,7 @@ export const translateToBaseLanguage = async (text: string, baseLang: Language):
 
         const ai = new GoogleGenAI({ apiKey });
         const response: any = await withRetry<any>(() => ai.models.generateContent({
-          model: "gemini-1.5-flash",
+          model: "gemini-3-flash-preview",
           contents: [{ role: 'user', parts: [{ text: `Translate the following text to ${tLang}. Give ONLY the direct translation, nothing else. If the text is already in ${tLang}, simply return it exactly as it is. Do not wrap in quotes or add notes.\n\nText: ${text}` }] }],
         }));
         
@@ -185,7 +185,7 @@ export const getSpeechBase64 = async (text: string, lang: Language = 'en', voice
       : `Say with a friendly tone in ENGLISH: ${text}`;
 
     const response: any = await withRetry<any>(() => ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: [{ role: 'user', parts: [{ text: instruction }] }],
       config: {
         responseModalities: ["AUDIO" as any], // Use string instead of enum to be safe with auto-gen SDK
@@ -258,7 +258,7 @@ export const generateBulkTasks = async (prompt: string, lang: Language): Promise
 
     const ai = new GoogleGenAI({ apiKey });
     const response: any = await withRetry<any>(() => ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: [{ role: 'user', parts: [{ text: `Generate a list of 4-6 child tasks based on this description: "${prompt}". 
       IMPORTANT: You MUST provide titles and descriptions in ${lang === 'es' ? 'Spanish' : 'English'}.
 
@@ -326,7 +326,7 @@ export const generateAvatars = async (userPrompt: string): Promise<string[]> => 
     // Fix: Explicitly type withRetry generic to GenerateContentResponse
     const requests = Array.from({ length: 4 }).map(() =>
       withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: { parts: [{ text: fullPrompt }] },
         config: { imageConfig: { aspectRatio: "1:1" } }
       }))
@@ -357,7 +357,7 @@ export const suggestEmoji = async (title: string, description: string): Promise<
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
     // Fix: Explicitly type response and withRetry generic as GenerateContentResponse to fix 'unknown' type error
     const response: GenerateContentResponse = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3-flash-preview',
       contents: `Suggest a single emoji that best represents this task for a kid's calendar.
       Title: "${title}"
       Description: "${description}"
