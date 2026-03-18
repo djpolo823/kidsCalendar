@@ -77,69 +77,94 @@ const speakWithBrowserFallback = (text: string, lang: Language) => {
   });
 };
 
+let translationQueue = Promise.resolve();
+
 export const translateText = async (text: string, targetLang: Language): Promise<string> => {
   if (!text || !text.trim()) return text;
-  const tLang = targetLang === 'es' ? 'Spanish' : 'English';
-  console.log(`[Gemini] Translating: "${text}" to ${tLang}`);
   
+  // 1. Check local cache to avoid redundant API hits across reloads
+  const cacheKey = `trans_${targetLang}_${text}`;
   try {
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn("[Gemini] No API Key found for translation");
-      return text;
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-    const response: any = await withRetry<any>(() => ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: [{ role: 'user', parts: [{ text: `Translate this text to ${tLang}. Respond ONLY with the translated text, no quotes or explanations.\n\nText: ${text}` }] }],
-    }));
-    
-    // Log the whole response for debugging if needed (redacted key info)
-    console.log("[Gemini] Response structure:", JSON.stringify(response).substring(0, 500));
-
-    let translated = '';
-    if (response.text) {
-      translated = response.text;
-    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
-      translated = response.candidates[0].content.parts[0].text;
-    }
-
-    translated = translated.trim();
-    console.log(`[Gemini] Translation result: "${translated}"`);
-    return translated || text;
-  } catch (error) {
-    console.error("[Gemini] Error translating text:", error);
-    return text;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) return cached;
+  } catch (e) {
+    // Ignore localStorage errors
   }
+
+  const tLang = targetLang === 'es' ? 'Spanish' : 'English';
+  
+  // 2. Add to sequential queue to avoid burst rate limits (429) when rendering many tasks
+  return new Promise((resolve) => {
+    translationQueue = translationQueue.then(async () => {
+      console.log(`[Gemini] Translating: "${text}" to ${tLang}`);
+      try {
+        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          console.warn("[Gemini] No API Key found for translation");
+          return resolve(text);
+        }
+
+        const ai = new GoogleGenAI({ apiKey });
+        const response: any = await withRetry<any>(() => ai.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: [{ role: 'user', parts: [{ text: `Translate this text to ${tLang}. Respond ONLY with the direct translated text, without quotes, notes, or explanations. If it is already ${tLang}, return it exactly as is.\n\nText: ${text}` }] }],
+        }));
+
+        let translated = '';
+        if (response.text) {
+          translated = response.text;
+        } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+          translated = response.candidates[0].content.parts[0].text;
+        }
+
+        translated = translated.trim();
+        console.log(`[Gemini] Translation result: "${translated}"`);
+        
+        const finalResult = translated || text;
+        try { localStorage.setItem(cacheKey, finalResult); } catch (e) {}
+        
+        // Wait briefly before next request to space them out
+        await sleep(400); 
+        resolve(finalResult);
+      } catch (error) {
+        console.error("[Gemini] Error translating text:", error);
+        resolve(text);
+      }
+    });
+  });
 };
 
 export const translateToBaseLanguage = async (text: string, baseLang: Language): Promise<string> => {
   if (!text || !text.trim()) return text;
   const tLang = baseLang === 'es' ? 'Spanish' : 'English';
   
-  try {
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) return text;
+  return new Promise((resolve) => {
+    translationQueue = translationQueue.then(async () => {
+      try {
+        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+        if (!apiKey) return resolve(text);
 
-    const ai = new GoogleGenAI({ apiKey });
-    const response: any = await withRetry<any>(() => ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: [{ role: 'user', parts: [{ text: `Translate the following text to ${tLang}. Give ONLY the direct translation, nothing else. If the text is already in ${tLang}, simply return it exactly as it is. Do not wrap in quotes or add notes.\n\nText: ${text}` }] }],
-    }));
-    
-    let translated = '';
-    if (response.text) {
-      translated = response.text;
-    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
-      translated = response.candidates[0].content.parts[0].text;
-    }
+        const ai = new GoogleGenAI({ apiKey });
+        const response: any = await withRetry<any>(() => ai.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: [{ role: 'user', parts: [{ text: `Translate the following text to ${tLang}. Give ONLY the direct translation, nothing else. If the text is already in ${tLang}, simply return it exactly as it is. Do not wrap in quotes or add notes.\n\nText: ${text}` }] }],
+        }));
+        
+        let translated = '';
+        if (response.text) {
+          translated = response.text;
+        } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+          translated = response.candidates[0].content.parts[0].text;
+        }
 
-    return translated.trim() || text;
-  } catch (error) {
-    console.error("[Gemini] Error translating to base language:", error);
-    return text;
-  }
+        await sleep(400);
+        resolve(translated.trim() || text);
+      } catch (error) {
+        console.error("[Gemini] Error translating to base language:", error);
+        resolve(text);
+      }
+    });
+  });
 };
 
 export const getSpeechBase64 = async (text: string, lang: Language = 'en', voice: string = 'Kore'): Promise<string | null> => {
